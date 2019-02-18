@@ -1,0 +1,39 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+      {
+        "label": "build firmware",
+        "type": "shell",
+        "command": "make -j16",
+        "options": {
+          "env": {
+            "INCLUDE": "${config:arm-none-eabi.include}",
+            "LIB": "${config:arm-none-eabi.lib}",
+            "LIBGCC": "${config:arm-none-eabi.libgcc}/thumb/v6-m/libgcc.a"
+          }
+        },
+        "linux": {
+          "options": {
+            "env": {
+              "PATH": "${config:arm-none-eabi.bin}:${env:PATH}"
+            }
+          }
+        },
+        "group": {
+          "kind": "build",
+          "isDefault": true
+        },
+        "problemMatcher": "$gcc"
+      },
+      {
+        "label": "Load Firmware",
+        "type": "shell",
+        "command": "st-flash write ./build/co2.bin 0x08000000",
+        "options": {
+          "cwd": "${workspaceRoot}"
+        },
+        "group": "build",
+        "problemMatcher": []
+      }
+    ]
+  }
