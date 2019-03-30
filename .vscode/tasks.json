@@ -4,7 +4,10 @@
       {
         "label": "build firmware",
         "type": "shell",
-        "command": "make -j16",
+        "command": "make -j16",,
+        "presentation": {
+            "panel": "new"
+        },
         "options": {
           "env": {
             "INCLUDE": "${config:arm-none-eabi.include}",
