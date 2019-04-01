@@ -46,6 +46,7 @@
 #include "../Drivers/SSD1306/ssd1306.h"
 #include <stdarg.h>
 #include <stdio.h>
+#include <stdlib.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -112,24 +113,27 @@ void loop()
 {
   
   HAL_StatusTypeDef status;
+__HAL_UART_CLEAR_IT(&huart1, UART_CLEAR_NEF|UART_CLEAR_OREF); 
 
   //Send get reading command
 
-  status = HAL_UART_Transmit_IT(&huart1, readCO2, 9);
+  status = HAL_UART_Transmit_IT(&huart1, readCO2, 9); //, HAL_MAX_DELAY
   if (status != HAL_OK)
     return;
   
-  HAL_Delay(100);
+  // HAL_Delay(100);
   //Read command response
-  // __HAL_UART_CLEAR_IT(&huart1, UART_CLEAR_NEF|UART_CLEAR_OREF); 
-  while(HAL_UART_Receive_IT(&huart1, buffer, 9) != HAL_OK) {
-    HAL_Delay(10);
-    // __HAL_UART_CLEAR_IT(&huart1, UART_CLEAR_NEF|UART_CLEAR_OREF); 
-  }
   
-  // status = HAL_UART_Receive_IT(&huart1, buffer, 9);
-  // if (status != HAL_OK)
-    // return;
+    
+  // __HAL_UART_CLEAR_OREFLAG(&huart1);
+  // __HAL_UART_CLEAR_NEFLAG(&huart1);
+
+  HAL_Delay(100);
+
+  status = HAL_UART_Receive_IT(&huart1, buffer, 9); //, 1000
+  if(status != HAL_OK) {
+    ssd1306_WriteString("CO2: RX ERR", Font_11x18, White);
+  } else 
 
   //Check checksumm
   if (buffer[8] == getCheckSum(buffer))
@@ -139,11 +143,18 @@ void loop()
     uint16_t temp = buffer[4] - 40;
 
     char *message;
-    message = asnprintf(strBuf, &strBufLen, "CO2: %d T:%d\r", co2, temp);
+    message = asnprintf(strBuf, &strBufLen, "CO2: %d T:%d", co2, temp);
 
     ssd1306_WriteString(message, Font_11x18, White);
     free(message);
   }
+  else
+  {
+    ssd1306_WriteString("CO2: CHK ERR", Font_11x18, White);
+  }
+
+  ssd1306_UpdateScreen();
+  ssd1306_SetCursor(0,0);
 }
 /* USER CODE END 0 */
 
@@ -182,18 +193,25 @@ int main(void)
 
   //Init OLED
   ssd1306_Init();
-  ssd1306_WriteString("CO2: Loading\r", Font_11x18, White);
+  ssd1306_WriteString("CO2: Warmup", Font_11x18, White);  
+  ssd1306_UpdateScreen();  
+  ssd1306_SetCursor(0,0);
+
+  //CO2 warmup delay
+  HAL_Delay(1000);
+
+  //Update warmup status
+  ssd1306_WriteString("CO2: Init  ", Font_11x18, White);
   ssd1306_UpdateScreen();
+  ssd1306_SetCursor(0,0);
 
-  //Init delay
-  HAL_Delay(2000);
-
+  int x = 0;
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
-  {
+  {    
     loop();
     HAL_Delay(10000);
     /* USER CODE END WHILE */
