@@ -43,10 +43,13 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#include "../Drivers/SSD1306/ssd1306.h"
+#include <stdbool.h>
+#include "../ExtDrivers/SSD1306/ssd1306.h"
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdint.h>
+
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -70,6 +73,7 @@ I2C_HandleTypeDef hi2c1;
 RTC_HandleTypeDef hrtc;
 
 UART_HandleTypeDef huart1;
+DMA_HandleTypeDef hdma_usart1_rx;
 
 /* USER CODE BEGIN PV */
 
@@ -78,6 +82,7 @@ UART_HandleTypeDef huart1;
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
+static void MX_DMA_Init(void);
 static void MX_I2C1_Init(void);
 static void MX_USART1_UART_Init(void);
 static void MX_RTC_Init(void);
@@ -90,8 +95,9 @@ static void MX_RTC_Init(void);
 //CO2 sensor data
 uint8_t readCO2[9] = {0xFF, 0x01, 0x86, 0x00, 0x00, 0x00, 0x00, 0x00, 0x79};
 uint8_t buffer[] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
-char strBuf[256];
+char strBuf[128];
 size_t strBufLen = sizeof(strBuf);
+bool firstTime = true;
 
 void error(void)
 {
@@ -111,50 +117,42 @@ uint8_t getCheckSum(uint8_t *packet)
 }
 void loop()
 {
-  
+
   HAL_StatusTypeDef status;
-__HAL_UART_CLEAR_IT(&huart1, UART_CLEAR_NEF|UART_CLEAR_OREF); 
 
   //Send get reading command
-
-  status = HAL_UART_Transmit_IT(&huart1, readCO2, 9); //, HAL_MAX_DELAY
-  if (status != HAL_OK)
+  status = HAL_UART_Transmit(&huart1, readCO2, 9, 100 ); //, HAL_MAX_DELAY
+  if (status != HAL_OK) {
+    ssd1306_WriteString("CO2: TX ERR      ", Font_7x10, White);
+    ssd1306_UpdateScreen();
+    ssd1306_SetCursor(0, 0);
     return;
-  
-  // HAL_Delay(100);
-  //Read command response
-  
-    
-  // __HAL_UART_CLEAR_OREFLAG(&huart1);
-  // __HAL_UART_CLEAR_NEFLAG(&huart1);
-
-  HAL_Delay(100);
-
-  status = HAL_UART_Receive_IT(&huart1, buffer, 9); //, 1000
-  if(status != HAL_OK) {
-    ssd1306_WriteString("CO2: RX ERR", Font_11x18, White);
-  } else 
-
-  //Check checksumm
-  if (buffer[8] == getCheckSum(buffer))
+  }
+ 
+  //Read command response  
+  status = HAL_UART_Receive_DMA(&huart1, buffer, 9);  
+  if (status != HAL_OK)
+  {
+    ssd1306_WriteString("CO2: RX ERR      ", Font_7x10, White);
+  }
+  else if (buffer[8] == getCheckSum(buffer)) 
   {
     //If all OK - printt PPM
     uint16_t co2 = buffer[2] * 256 + buffer[3];
     uint16_t temp = buffer[4] - 40;
 
-    char *message;
-    message = asnprintf(strBuf, &strBufLen, "CO2: %d T:%d", co2, temp);
+    char *message = asnprintf(strBuf, &strBufLen-1, "CO2: %d T:%d", co2, temp);
 
-    ssd1306_WriteString(message, Font_11x18, White);
-    free(message);
+    ssd1306_WriteString(message, Font_7x10, White);
+    
   }
   else
   {
-    ssd1306_WriteString("CO2: CHK ERR", Font_11x18, White);
+    ssd1306_WriteString("CO2: CHK ERR", Font_7x10, White);
   }
 
   ssd1306_UpdateScreen();
-  ssd1306_SetCursor(0,0);
+  ssd1306_SetCursor(0, 0);
 }
 /* USER CODE END 0 */
 
@@ -186,34 +184,34 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
+  MX_DMA_Init();
   MX_I2C1_Init();
   MX_USART1_UART_Init();
   MX_RTC_Init();
   /* USER CODE BEGIN 2 */
-
+  
   //Init OLED
   ssd1306_Init();
-  ssd1306_WriteString("CO2: Warmup", Font_11x18, White);  
-  ssd1306_UpdateScreen();  
-  ssd1306_SetCursor(0,0);
+  ssd1306_WriteString("CO2: Warmup", Font_7x10, White);
+  ssd1306_UpdateScreen();
+  ssd1306_SetCursor(0, 0);
 
   //CO2 warmup delay
-  HAL_Delay(1000);
+  HAL_Delay(2000);
 
   //Update warmup status
-  ssd1306_WriteString("CO2: Init  ", Font_11x18, White);
+  ssd1306_WriteString("CO2: Init  ", Font_7x10, White);
   ssd1306_UpdateScreen();
-  ssd1306_SetCursor(0,0);
+  ssd1306_SetCursor(0, 0);  
 
-  int x = 0;
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
-  {    
+  {
     loop();
-    HAL_Delay(10000);
+    HAL_Delay(5000);
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -231,13 +229,14 @@ void SystemClock_Config(void)
   RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
   RCC_PeriphCLKInitTypeDef PeriphClkInit = {0};
 
-  /**Configure LSE Drive Capability 
+  /** Configure LSE Drive Capability 
   */
   HAL_PWR_EnableBkUpAccess();
   __HAL_RCC_LSEDRIVE_CONFIG(RCC_LSEDRIVE_LOW);
-  /**Initializes the CPU, AHB and APB busses clocks 
+  /** Initializes the CPU, AHB and APB busses clocks 
   */
-  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_LSI | RCC_OSCILLATORTYPE_LSE | RCC_OSCILLATORTYPE_MSI;
+  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_LSI|RCC_OSCILLATORTYPE_LSE
+                              |RCC_OSCILLATORTYPE_MSI;
   RCC_OscInitStruct.LSEState = RCC_LSE_ON;
   RCC_OscInitStruct.LSIState = RCC_LSI_ON;
   RCC_OscInitStruct.MSIState = RCC_MSI_ON;
@@ -254,9 +253,10 @@ void SystemClock_Config(void)
   {
     Error_Handler();
   }
-  /**Initializes the CPU, AHB and APB busses clocks 
+  /** Initializes the CPU, AHB and APB busses clocks 
   */
-  RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK | RCC_CLOCKTYPE_SYSCLK | RCC_CLOCKTYPE_PCLK1 | RCC_CLOCKTYPE_PCLK2;
+  RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK|RCC_CLOCKTYPE_SYSCLK
+                              |RCC_CLOCKTYPE_PCLK1|RCC_CLOCKTYPE_PCLK2;
   RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
   RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
   RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV1;
@@ -266,7 +266,8 @@ void SystemClock_Config(void)
   {
     Error_Handler();
   }
-  PeriphClkInit.PeriphClockSelection = RCC_PERIPHCLK_RTC | RCC_PERIPHCLK_USART1 | RCC_PERIPHCLK_I2C1;
+  PeriphClkInit.PeriphClockSelection = RCC_PERIPHCLK_RTC|RCC_PERIPHCLK_USART1
+                              |RCC_PERIPHCLK_I2C1;
   PeriphClkInit.Usart1ClockSelection = RCC_USART1CLKSOURCE_PCLK2;
   PeriphClkInit.I2c1ClockSelection = RCC_I2C1CLKSOURCE_PCLK1;
   PeriphClkInit.RTCClockSelection = RCC_RTCCLKSOURCE_LSI;
@@ -274,13 +275,13 @@ void SystemClock_Config(void)
   {
     Error_Handler();
   }
-  /**Configure the main internal regulator output voltage 
+  /** Configure the main internal regulator output voltage 
   */
   if (HAL_PWREx_ControlVoltageScaling(PWR_REGULATOR_VOLTAGE_SCALE1) != HAL_OK)
   {
     Error_Handler();
   }
-  /**Enable MSI Auto calibration 
+  /** Enable MSI Auto calibration 
   */
   HAL_RCCEx_EnableMSIPLLMode();
 }
@@ -313,13 +314,13 @@ static void MX_I2C1_Init(void)
   {
     Error_Handler();
   }
-  /**Configure Analogue filter 
+  /** Configure Analogue filter 
   */
   if (HAL_I2CEx_ConfigAnalogFilter(&hi2c1, I2C_ANALOGFILTER_ENABLE) != HAL_OK)
   {
     Error_Handler();
   }
-  /**Configure Digital filter 
+  /** Configure Digital filter 
   */
   if (HAL_I2CEx_ConfigDigitalFilter(&hi2c1, 0) != HAL_OK)
   {
@@ -328,6 +329,7 @@ static void MX_I2C1_Init(void)
   /* USER CODE BEGIN I2C1_Init 2 */
 
   /* USER CODE END I2C1_Init 2 */
+
 }
 
 /**
@@ -345,7 +347,7 @@ static void MX_RTC_Init(void)
   /* USER CODE BEGIN RTC_Init 1 */
 
   /* USER CODE END RTC_Init 1 */
-  /**Initialize RTC Only 
+  /** Initialize RTC Only 
   */
   hrtc.Instance = RTC;
   hrtc.Init.HourFormat = RTC_HOURFORMAT_24;
@@ -362,6 +364,7 @@ static void MX_RTC_Init(void)
   /* USER CODE BEGIN RTC_Init 2 */
 
   /* USER CODE END RTC_Init 2 */
+
 }
 
 /**
@@ -386,8 +389,8 @@ static void MX_USART1_UART_Init(void)
   huart1.Init.Parity = UART_PARITY_NONE;
   huart1.Init.Mode = UART_MODE_TX_RX;
   huart1.Init.HwFlowCtl = UART_HWCONTROL_NONE;
-  huart1.Init.OverSampling = UART_OVERSAMPLING_16;
-  huart1.Init.OneBitSampling = UART_ONE_BIT_SAMPLE_DISABLE;
+  huart1.Init.OverSampling = UART_OVERSAMPLING_8;
+  huart1.Init.OneBitSampling = UART_ONE_BIT_SAMPLE_ENABLE;
   huart1.AdvancedInit.AdvFeatureInit = UART_ADVFEATURE_NO_INIT;
   if (HAL_UART_Init(&huart1) != HAL_OK)
   {
@@ -396,6 +399,22 @@ static void MX_USART1_UART_Init(void)
   /* USER CODE BEGIN USART1_Init 2 */
 
   /* USER CODE END USART1_Init 2 */
+
+}
+
+/** 
+  * Enable DMA controller clock
+  */
+static void MX_DMA_Init(void) 
+{
+  /* DMA controller clock enable */
+  __HAL_RCC_DMA1_CLK_ENABLE();
+
+  /* DMA interrupt init */
+  /* DMA1_Channel5_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA1_Channel5_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(DMA1_Channel5_IRQn);
+
 }
 
 /**
@@ -416,14 +435,17 @@ static void MX_GPIO_Init(void)
   /*Configure GPIO pins : PA0 PA1 PA2 PA3 
                            PA4 PA5 PA6 PA7 
                            PA8 PA11 PA12 PA15 */
-  GPIO_InitStruct.Pin = GPIO_PIN_0 | GPIO_PIN_1 | GPIO_PIN_2 | GPIO_PIN_3 | GPIO_PIN_4 | GPIO_PIN_5 | GPIO_PIN_6 | GPIO_PIN_7 | GPIO_PIN_8 | GPIO_PIN_11 | GPIO_PIN_12 | GPIO_PIN_15;
+  GPIO_InitStruct.Pin = GPIO_PIN_0|GPIO_PIN_1|GPIO_PIN_2|GPIO_PIN_3 
+                          |GPIO_PIN_4|GPIO_PIN_5|GPIO_PIN_6|GPIO_PIN_7 
+                          |GPIO_PIN_8|GPIO_PIN_11|GPIO_PIN_12|GPIO_PIN_15;
   GPIO_InitStruct.Mode = GPIO_MODE_ANALOG;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
   /*Configure GPIO pins : PB0 PB1 PB3 PB4 
                            PB5 */
-  GPIO_InitStruct.Pin = GPIO_PIN_0 | GPIO_PIN_1 | GPIO_PIN_3 | GPIO_PIN_4 | GPIO_PIN_5;
+  GPIO_InitStruct.Pin = GPIO_PIN_0|GPIO_PIN_1|GPIO_PIN_3|GPIO_PIN_4 
+                          |GPIO_PIN_5;
   GPIO_InitStruct.Mode = GPIO_MODE_ANALOG;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
@@ -433,6 +455,7 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Mode = GPIO_MODE_ANALOG;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(GPIOH, &GPIO_InitStruct);
+
 }
 
 /* USER CODE BEGIN 4 */
@@ -451,7 +474,7 @@ void Error_Handler(void)
   /* USER CODE END Error_Handler_Debug */
 }
 
-#ifdef USE_FULL_ASSERT
+#ifdef  USE_FULL_ASSERT
 /**
   * @brief  Reports the name of the source file and the source line number
   *         where the assert_param error has occurred.
@@ -460,7 +483,7 @@ void Error_Handler(void)
   * @retval None
   */
 void assert_failed(char *file, uint32_t line)
-{
+{ 
   /* USER CODE BEGIN 6 */
   /* User can add his own implementation to report the file name and line number,
      tex: printf("Wrong parameters value: file %s on line %d\r\n", file, line) */
